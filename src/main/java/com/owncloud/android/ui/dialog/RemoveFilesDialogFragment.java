@@ -63,7 +63,7 @@ public class RemoveFilesDialogFragment extends ConfirmationDialogFragment implem
 
     /**
      * Public factory method to create new RemoveFilesDialogFragment instances.
-     * 
+     *
      * @param files           Files to remove.
      * @return                Dialog ready to show.
      */
@@ -78,7 +78,7 @@ public class RemoveFilesDialogFragment extends ConfirmationDialogFragment implem
         for (OCFile file: files) {
             containsFolder |= file.isFolder();
             containsDown |= file.isDown();
-            containsFavorite |= file.isAvailableOffline();
+            containsFavorite |= file.isFavorite();
         }
 
         if (files.size() == SINGLE_SELECTION) {
@@ -109,7 +109,7 @@ public class RemoveFilesDialogFragment extends ConfirmationDialogFragment implem
         args.putInt(ARG_NEGATIVE_BTN_RES, localRemoveButton);
         args.putParcelableArrayList(ARG_TARGET_FILES, files);
         frag.setArguments(args);
-        
+
         return frag;
     }
 
@@ -144,11 +144,11 @@ public class RemoveFilesDialogFragment extends ConfirmationDialogFragment implem
     public Dialog onCreateDialog(Bundle savedInstanceState) {
         Dialog dialog = super.onCreateDialog(savedInstanceState);
         mTargetFiles = getArguments().getParcelableArrayList(ARG_TARGET_FILES);
-        
+
         setOnConfirmationListener(this);
-        
+
         return dialog;
-    }    
+    }
 
     /**
      * Performs the removal of the target file, both locally and in the server and
@@ -160,7 +160,7 @@ public class RemoveFilesDialogFragment extends ConfirmationDialogFragment implem
         cg.getFileOperationsHelper().removeFiles(mTargetFiles, false, false);
         finishActionMode();
     }
-    
+
     /**
      * Performs the removal of the local copy of the target file
      */

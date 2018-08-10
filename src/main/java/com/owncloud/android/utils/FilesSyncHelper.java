@@ -260,7 +260,7 @@ public final class FilesSyncHelper {
         Set<JobRequest> jobRequests = JobManager.instance().getAllJobRequestsForTag(OfflineSyncJob.TAG);
         if (jobRequests.isEmpty()) {
             new JobRequest.Builder(OfflineSyncJob.TAG)
-                    .setPeriodic(TimeUnit.MINUTES.toMillis(15), TimeUnit.MINUTES.toMillis(5))
+                .setPeriodic(TimeUnit.MINUTES.toMillis(5), TimeUnit.MINUTES.toMillis(1))
                     .setUpdateCurrent(false)
                     .build()
                     .schedule();

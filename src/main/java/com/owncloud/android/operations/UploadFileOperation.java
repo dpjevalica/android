@@ -1053,7 +1053,6 @@ public class UploadFileOperation extends SyncOperation {
                 mFile.getModificationTimestampAtLastSyncForData()
         );
         newFile.setEtag(mFile.getEtag());
-        newFile.setAvailableOffline(mFile.isAvailableOffline());
         newFile.setLastSyncDateForProperties(mFile.getLastSyncDateForProperties());
         newFile.setLastSyncDateForData(mFile.getLastSyncDateForData());
         newFile.setStoragePath(mFile.getStoragePath());

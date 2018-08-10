@@ -21,8 +21,6 @@ package com.owncloud.android.jobs;
 
 import android.accounts.Account;
 import android.content.Context;
-import android.content.Intent;
-import android.database.Cursor;
 import android.os.Build;
 import android.os.PowerManager;
 import android.support.annotation.NonNull;
@@ -35,27 +33,26 @@ import com.owncloud.android.MainApp;
 import com.owncloud.android.authentication.AccountUtils;
 import com.owncloud.android.datamodel.FileDataStorageManager;
 import com.owncloud.android.datamodel.OCFile;
-import com.owncloud.android.db.ProviderMeta;
 import com.owncloud.android.lib.common.operations.RemoteOperationResult;
+import com.owncloud.android.lib.common.utils.Log_OC;
+import com.owncloud.android.lib.resources.files.CheckEtagOperation;
 import com.owncloud.android.operations.SynchronizeFileOperation;
-import com.owncloud.android.ui.activity.ConflictsResolveActivity;
 import com.owncloud.android.utils.ConnectivityUtils;
+import com.owncloud.android.utils.FileStorageUtils;
 import com.owncloud.android.utils.PowerUtils;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.io.File;
 import java.util.Set;
 
 public class OfflineSyncJob extends Job {
     public static final String TAG = "OfflineSyncJob";
 
     private static final String WAKELOCK_TAG_SEPARATION = ":";
-    private List<OfflineFile> offlineFileList = new ArrayList<>();
 
     @NonNull
     @Override
     protected Result onRunJob(@NonNull Params params) {
-        final Context context = MainApp.getAppContext();
+        final Context context = getContext();
 
         PowerManager.WakeLock wakeLock = null;
         if (!PowerUtils.isPowerSaveMode(context) &&
@@ -75,53 +72,19 @@ public class OfflineSyncJob extends Job {
                 wakeLock.acquire(10 * 60 * 1000);
             }
 
-            Cursor cursorOnKeptInSync = context.getContentResolver().query(
-                    ProviderMeta.ProviderTableMeta.CONTENT_URI,
-                    null,
-                    ProviderMeta.ProviderTableMeta.FILE_KEEP_IN_SYNC + " = ?",
-                    new String[]{String.valueOf(1)},
-                    null
-            );
+            Account[] accounts = AccountUtils.getAccounts(context);
 
-            if (cursorOnKeptInSync != null) {
-                if (cursorOnKeptInSync.moveToFirst()) {
+            for (Account account : accounts) {
+                FileDataStorageManager storageManager = new FileDataStorageManager(account,
+                        getContext().getContentResolver());
 
-                    String localPath;
-                    String accountName;
-                    Account account;
-                    do {
-                        localPath = cursorOnKeptInSync.getString(cursorOnKeptInSync
-                                .getColumnIndex(ProviderMeta.ProviderTableMeta.FILE_STORAGE_PATH));
-                        accountName = cursorOnKeptInSync.getString(cursorOnKeptInSync
-                                .getColumnIndex(ProviderMeta.ProviderTableMeta.FILE_ACCOUNT_OWNER));
+                OCFile ocRoot = storageManager.getFileByPath("/");
 
-                        account = new Account(accountName, MainApp.getAccountType(getContext()));
-                        if (!AccountUtils.exists(account, context) || localPath == null || localPath.length() <= 0) {
-                            continue;
-                        }
-
-                        offlineFileList.add(new OfflineFile(localPath, account));
-
-                    } while (cursorOnKeptInSync.moveToNext());
-
+                if (ocRoot.getStoragePath() == null) {
+                    break;
                 }
-                cursorOnKeptInSync.close();
-            }
 
-            FileDataStorageManager storageManager;
-            for (OfflineFile offlineFile : offlineFileList) {
-                storageManager = new FileDataStorageManager(offlineFile.getAccount(), context.getContentResolver());
-                OCFile file = storageManager.getFileByLocalPath(offlineFile.getLocalPath());
-                SynchronizeFileOperation sfo =
-                        new SynchronizeFileOperation(file, null, offlineFile.getAccount(), true, context);
-                RemoteOperationResult result = sfo.execute(storageManager, context);
-                if (result.getCode() == RemoteOperationResult.ResultCode.SYNC_CONFLICT) {
-                    Intent i = new Intent(context, ConflictsResolveActivity.class);
-                    i.setFlags(i.getFlags() | Intent.FLAG_ACTIVITY_NEW_TASK);
-                    i.putExtra(ConflictsResolveActivity.EXTRA_FILE, file);
-                    i.putExtra(ConflictsResolveActivity.EXTRA_ACCOUNT, offlineFile.getAccount());
-                    context.startActivity(i);
-                }
+                recursive(new File(ocRoot.getStoragePath()), storageManager, account);
             }
 
             if (wakeLock != null) {
@@ -132,30 +95,72 @@ public class OfflineSyncJob extends Job {
         return Result.SUCCESS;
     }
 
+    private void recursive(File folder, FileDataStorageManager storageManager, Account account) {
+        String downloadFolder = FileStorageUtils.getSavePath(account.name);
+        String folderName = folder.getAbsolutePath().replaceFirst(downloadFolder, "") + "/";
+        Log_OC.d(TAG, folderName + ": enter");
 
-    private class OfflineFile {
-        private String localPath;
-        private Account account;
-
-        private OfflineFile(String localPath, Account account) {
-            this.localPath = localPath;
-            this.account = account;
+        // exit
+        if (folder.listFiles() == null) {
+            return;
         }
 
-        public String getLocalPath() {
-            return localPath;
+        OCFile ocFolder = storageManager.getFileByPath(folderName);
+        Log_OC.d(TAG, folderName + ": currentEtag: " + ocFolder.getEtag());
+
+        // check for etag change, if false, skip
+        CheckEtagOperation checkEtagOperation = new CheckEtagOperation(ocFolder.getRemotePath(),
+                ocFolder.getEtagOnServer());
+        RemoteOperationResult result = checkEtagOperation.execute(account, getContext());
+
+        // eTag changed, sync file
+        switch (result.getCode()) {
+            case ETAG_UNCHANGED:
+                Log_OC.d(TAG, folderName + ": eTag unchanged");
+                return;
+
+            case FILE_NOT_FOUND:
+                boolean removalResult = storageManager.removeFolder(ocFolder, true, true);
+                if (!removalResult) {
+                    Log_OC.e(TAG, "removal of " + ocFolder.getStoragePath() + " failed: file not found");
+                }
+                return;
+
+            default:
+            case ETAG_CHANGED:
+                Log_OC.d(TAG, folderName + ": eTag changed");
+                break;
         }
 
-        public void setLocalPath(String localPath) {
-            this.localPath = localPath;
+        // iterate over downloaded files
+        File[] files = folder.listFiles(File::isFile);
+
+        if (files != null) {
+            for (File file : files) {
+                OCFile ocFile = storageManager.getFileByLocalPath(file.getPath());
+                SynchronizeFileOperation synchronizeFileOperation = new SynchronizeFileOperation(ocFile.getRemotePath(),
+                        account, true, getContext());
+
+                synchronizeFileOperation.execute(storageManager, getContext());
+            }
         }
 
-        public Account getAccount() {
-            return account;
+        // recursive into folder
+        File[] subfolders = folder.listFiles(File::isDirectory);
+
+        if (subfolders != null) {
+            for (File subfolder : subfolders) {
+                recursive(subfolder, storageManager, account);
+            }
         }
 
-        public void setAccount(Account account) {
-            this.account = account;
+        // update eTag
+        try {
+            String updatedEtag = (String) result.getData().get(0);
+            ocFolder.setEtagOnServer(updatedEtag);
+            storageManager.saveFile(ocFolder);
+        } catch (Exception e) {
+            Log_OC.e(TAG, "Failed to update etag on " + folder.getAbsolutePath());
         }
     }
 }

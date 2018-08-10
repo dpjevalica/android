@@ -331,7 +331,6 @@ public class OCFileListAdapter extends RecyclerView.Adapter<RecyclerView.ViewHol
             }
 
             gridViewHolder.favorite.setVisibility(file.isFavorite() ? View.VISIBLE : View.GONE);
-            gridViewHolder.offlineIcon.setVisibility(file.isAvailableOffline() ? View.VISIBLE : View.GONE);
 
             if (multiSelect) {
                 gridViewHolder.checkbox.setVisibility(View.VISIBLE);
@@ -814,7 +813,6 @@ public class OCFileListAdapter extends RecyclerView.Adapter<RecyclerView.ViewHol
     static class OCFileListGridImageViewHolder extends RecyclerView.ViewHolder {
         private final ImageView thumbnail;
         private final ImageView favorite;
-        private final ImageView offlineIcon;
         private final ImageView localFileIndicator;
         private final ImageView shared;
         private final ImageView checkbox;
@@ -825,7 +823,6 @@ public class OCFileListAdapter extends RecyclerView.Adapter<RecyclerView.ViewHol
 
             thumbnail = itemView.findViewById(R.id.thumbnail);
             favorite = itemView.findViewById(R.id.favorite_action);
-            offlineIcon = itemView.findViewById(R.id.keptOfflineIcon);
             localFileIndicator = itemView.findViewById(R.id.localFileIndicator);
             shared = itemView.findViewById(R.id.sharedIcon);
             checkbox = itemView.findViewById(R.id.custom_checkbox);
