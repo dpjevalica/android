@@ -416,6 +416,15 @@ public class OCFileListFragment extends ExtendedListFragment implements
     }
 
     @Override
+    public void directCameraUpload() {
+        UploadFilesActivity.startUploadActivityForResult(
+                getActivity(),
+                ((FileActivity) getActivity()).getAccount(),
+                FileDisplayActivity.REQUEST_CODE__DIRECT_CAMERA_UPLOAD
+        );
+    }
+
+    @Override
     public void uploadFiles() {
         UploadFilesActivity.startUploadActivityForResult(
                 getActivity(),

@@ -23,13 +23,18 @@ package com.owncloud.android.ui.activity;
 import android.accounts.Account;
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.content.Context;
 import android.content.Intent;
 import android.content.res.ColorStateList;
+import android.database.Cursor;
+import android.graphics.Bitmap;
 import android.graphics.PorterDuff;
 import android.graphics.drawable.Drawable;
+import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Bundle;
 import android.os.Environment;
+import android.provider.MediaStore;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
 import android.support.v4.app.DialogFragment;
@@ -46,15 +51,10 @@ import android.view.MenuItem;
 import android.view.View;
 import android.view.View.OnClickListener;
 import android.view.ViewGroup;
-import android.widget.ArrayAdapter;
-import android.widget.Button;
-import android.widget.EditText;
-import android.widget.ImageView;
-import android.widget.Spinner;
-import android.widget.TextView;
-
+import android.widget.*;
 import com.owncloud.android.R;
 import com.owncloud.android.db.PreferenceManager;
+import com.owncloud.android.files.services.FileUploader;
 import com.owncloud.android.lib.common.utils.Log_OC;
 import com.owncloud.android.ui.dialog.ConfirmationDialogFragment;
 import com.owncloud.android.ui.dialog.ConfirmationDialogFragment.ConfirmationDialogFragmentListener;
@@ -66,8 +66,10 @@ import com.owncloud.android.utils.FileSortOrder;
 import com.owncloud.android.utils.FileStorageUtils;
 import com.owncloud.android.utils.ThemeUtils;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.util.ArrayList;
+import java.util.Calendar;
 import java.util.List;
 
 /**
@@ -99,6 +101,9 @@ public class UploadFilesActivity extends FileActivity implements
     public static final String EXTRA_ACTION = UploadFilesActivity.class.getCanonicalName() + ".EXTRA_ACTION";
     public final static String KEY_LOCAL_FOLDER_PICKER_MODE = UploadFilesActivity.class.getCanonicalName()
             + ".LOCAL_FOLDER_PICKER_MODE";
+    private static final String EXTRA_REQUEST_CODE = UploadFilesActivity.class.getCanonicalName() + ".REQUEST_CODE";
+
+    private static final int REQUEST_CODE_CAPTURE_CAMERA = 1;
 
     public static final int RESULT_OK_AND_MOVE = RESULT_FIRST_USER;
     public static final int RESULT_OK_AND_DO_NOTHING = 2;
@@ -112,6 +117,8 @@ public class UploadFilesActivity extends FileActivity implements
     private static final String TAG = "UploadFilesActivity";
     private static final String WAIT_DIALOG_TAG = "WAIT";
     private static final String QUERY_TO_MOVE_DIALOG_TAG = "QUERY_TO_MOVE";
+    private String capturedImagePath;
+    private int requestCode;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -121,6 +128,7 @@ public class UploadFilesActivity extends FileActivity implements
         Bundle extras = getIntent().getExtras();
         if (extras != null) {
             mLocalFolderPickerMode = extras.getBoolean(KEY_LOCAL_FOLDER_PICKER_MODE, false);
+            requestCode = (int) extras.get(EXTRA_REQUEST_CODE);
         }
 
         if (savedInstanceState != null) {
@@ -154,40 +162,34 @@ public class UploadFilesActivity extends FileActivity implements
         }
         mDirectories.add(File.separator);
 
-        // Inflate and set the layout view
-        setContentView(R.layout.upload_files_layout);
+        if(requestCode == FileDisplayActivity.REQUEST_CODE__DIRECT_CAMERA_UPLOAD){
+            startActivityForResult(new Intent(MediaStore.ACTION_IMAGE_CAPTURE), REQUEST_CODE_CAPTURE_CAMERA);
+        } else {
 
-        if (mLocalFolderPickerMode) {
-            findViewById(R.id.upload_options).setVisibility(View.GONE);
-            ((AppCompatButton) findViewById(R.id.upload_files_btn_upload))
-                    .setText(R.string.uploader_btn_alternative_text);
-        }
+            /// USER INTERFACE
 
         mFileListFragment = (LocalFileListFragment) getSupportFragmentManager().findFragmentById(R.id.local_files_list);
 
         // Set input controllers
         findViewById(R.id.upload_files_btn_cancel).setOnClickListener(this);
 
-        mUploadBtn = (AppCompatButton) findViewById(R.id.upload_files_btn_upload);
-        mUploadBtn.getBackground().setColorFilter(ThemeUtils.primaryAccentColor(this), PorterDuff.Mode.SRC_ATOP);
-        mUploadBtn.setOnClickListener(this);
+            // Inflate and set the layout view
+            setContentView(R.layout.upload_files_layout);
 
-        int localBehaviour = PreferenceManager.getUploaderBehaviour(this);
+            if (mLocalFolderPickerMode) {
+                findViewById(R.id.upload_options).setVisibility(View.GONE);
+                ((AppCompatButton) findViewById(R.id.upload_files_btn_upload))
+                        .setText(R.string.uploader_btn_alternative_text);
+            }
 
-        // file upload spinner
-        mBehaviourSpinner = findViewById(R.id.upload_files_spinner_behaviour);
+            mFileListFragment = (LocalFileListFragment) getSupportFragmentManager().findFragmentById(R.id.local_files_list);
 
-        List<String> behaviours = new ArrayList<>();
-        behaviours.add(getString(R.string.uploader_upload_files_behaviour_move_to_nextcloud_folder,
-                ThemeUtils.getDefaultDisplayNameForRootFolder(this)));
-        behaviours.add(getString(R.string.uploader_upload_files_behaviour_only_upload));
-        behaviours.add(getString(R.string.uploader_upload_files_behaviour_upload_and_delete_from_source));
+            // Set input controllers
+            findViewById(R.id.upload_files_btn_cancel).setOnClickListener(this);
 
-        ArrayAdapter<String> behaviourAdapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item,
-                behaviours);
-        behaviourAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
-        mBehaviourSpinner.setAdapter(behaviourAdapter);
-        mBehaviourSpinner.setSelection(localBehaviour);
+            mUploadBtn = (AppCompatButton) findViewById(R.id.upload_files_btn_upload);
+            mUploadBtn.getBackground().setColorFilter(ThemeUtils.primaryAccentColor(this), PorterDuff.Mode.SRC_ATOP);
+            mUploadBtn.setOnClickListener(this);
 
         // setup the toolbar
         setupToolbar();
@@ -201,10 +203,38 @@ public class UploadFilesActivity extends FileActivity implements
         actionBar.setNavigationMode(ActionBar.NAVIGATION_MODE_LIST);
         actionBar.setListNavigationCallbacks(mDirectories, this);
 
-        Drawable backArrow = getResources().getDrawable(R.drawable.ic_arrow_back);
+            // file upload spinner
+            mBehaviourSpinner = findViewById(R.id.upload_files_spinner_behaviour);
 
-        if (actionBar != null) {
-            actionBar.setHomeAsUpIndicator(ThemeUtils.tintDrawable(backArrow, ThemeUtils.fontColor(this)));
+            List<String> behaviours = new ArrayList<>();
+            behaviours.add(getString(R.string.uploader_upload_files_behaviour_move_to_nextcloud_folder,
+                    ThemeUtils.getDefaultDisplayNameForRootFolder(this)));
+            behaviours.add(getString(R.string.uploader_upload_files_behaviour_only_upload));
+            behaviours.add(getString(R.string.uploader_upload_files_behaviour_upload_and_delete_from_source));
+
+            ArrayAdapter<String> behaviourAdapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item,
+                    behaviours);
+            behaviourAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+            mBehaviourSpinner.setAdapter(behaviourAdapter);
+            mBehaviourSpinner.setSelection(localBehaviour);
+
+            // setup the toolbar
+            setupToolbar();
+
+            // Action bar setup
+            ActionBar actionBar = getSupportActionBar();
+            actionBar.setHomeButtonEnabled(true);   // mandatory since Android ICS, according to the
+            // official documentation
+            actionBar.setDisplayHomeAsUpEnabled(mCurrentDir != null && mCurrentDir.getName() != null);
+            actionBar.setDisplayShowTitleEnabled(false);
+            actionBar.setNavigationMode(ActionBar.NAVIGATION_MODE_LIST);
+            actionBar.setListNavigationCallbacks(mDirectories, this);
+
+            Drawable backArrow = getResources().getDrawable(R.drawable.ic_arrow_back);
+
+            if (actionBar != null) {
+                actionBar.setHomeAsUpIndicator(ThemeUtils.tintDrawable(backArrow, ThemeUtils.fontColor(this)));
+            }
         }
 
         // wait dialog
@@ -227,9 +257,74 @@ public class UploadFilesActivity extends FileActivity implements
     public static void startUploadActivityForResult(Activity activity, Account account, int requestCode) {
         Intent action = new Intent(activity, UploadFilesActivity.class);
         action.putExtra(EXTRA_ACCOUNT, account);
+        action.putExtra(EXTRA_REQUEST_CODE, requestCode);
         activity.startActivityForResult(action, requestCode);
     }
 
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent capturedData) {
+        if (requestCode == REQUEST_CODE_CAPTURE_CAMERA && resultCode == RESULT_OK) {
+            Bundle capturedImageData = capturedData.getExtras();
+            Bitmap capturedImage = (Bitmap) capturedImageData.get("data");
+            if (capturedImage != null) {
+                Uri capturedImageUri = getImageUri(getApplicationContext(),capturedImage);
+                capturedImagePath = getRealPathFromUri(capturedImageUri);
+                File capturedImageFile = new File(capturedImagePath);
+                File parent = capturedImageFile.getParentFile();
+                File newImage = new File(parent,getCapturedImageName());
+                capturedImageFile.renameTo(newImage);
+                capturedImageFile.delete();
+                capturedImagePath = newImage.getAbsolutePath();
+                new CheckAvailableSpaceTask().execute(true);
+            }
+        } else if (resultCode == RESULT_CANCELED) {
+            setResult(RESULT_CANCELED);
+            finish();
+        }
+    }
+
+    /**
+     * Compressing the image to JPEG format and using the MediaStore to Uri of the Image
+     *
+     * @param context       Context of current state of the application
+     * @param capturedImage Bitmap of the Image captured
+     * @return Uri of the image that has been captured using the device's camera
+     */
+    private Uri getImageUri(Context context, Bitmap capturedImage) {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        capturedImage.compress(Bitmap.CompressFormat.JPEG, 100, bytes);
+        String path = MediaStore.Images.Media.insertImage(context.getContentResolver(), capturedImage, "Captured Image", null);
+        return Uri.parse(path);
+    }
+
+    /**
+     * Using the content provider to obtain the path of the image
+     *
+     * @param capturedPictureUri The Uri of the captured Image obtained from calling getImageUri() function.
+     * @return Actual Uri of the captured Image
+     */
+    private String getRealPathFromUri(Uri capturedPictureUri) {
+        Cursor cursor = getContentResolver().query(capturedPictureUri, null, null, null, null);
+        cursor.moveToFirst();
+        int index = cursor.getColumnIndex(MediaStore.Images.ImageColumns.DATA);
+        return cursor.getString(index);
+    }
+
+    private String getCapturedImageName() {
+        Calendar calendar = Calendar.getInstance();
+        String year = "" + calendar.get(Calendar.YEAR);
+        String month = ("0" + (calendar.get(Calendar.MONTH) + 1));
+        String day = ("0" + calendar.get(Calendar.DAY_OF_MONTH));
+        String hour = ("0" + calendar.get(Calendar.HOUR_OF_DAY));
+        String minute = ("0" + calendar.get(Calendar.MINUTE));
+        String second = ("0" + calendar.get(Calendar.SECOND));
+        month = month.length() == 3 ? month.substring(1, month.length()) : month;
+        day = day.length() == 3 ? day.substring(1, day.length()) : day;
+        hour = hour.length() == 3 ? hour.substring(1, hour.length()) : hour;
+        minute = minute.length() == 3 ? minute.substring(1, minute.length()) : minute;
+        second = second.length() == 3 ? second.substring(1, second.length()) : second;
+        return "IMG_" + year + month + day + "_" + hour + minute + second + ".jpg";
+    }
 
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
@@ -335,30 +430,33 @@ public class UploadFilesActivity extends FileActivity implements
 
     @Override
     public void onBackPressed() {
-        if (isSearchOpen() && mSearchView != null) {
-            mSearchView.setQuery("", false);
-            mFileListFragment.onClose();
-            mSearchView.onActionViewCollapsed();
-            setDrawerIndicatorEnabled(isDrawerIndicatorAvailable());
-        } else {
-            if (mDirectories.getCount() <= SINGLE_DIR) {
-                finish();
-                return;
-            }
-            popDirname();
-            mFileListFragment.onNavigateUp();
-            mCurrentDir = mFileListFragment.getCurrentDirectory();
-
-            if (mCurrentDir.getParentFile() == null) {
-                ActionBar actionBar = getSupportActionBar();
-                if (actionBar != null) {
-                    actionBar.setDisplayHomeAsUpEnabled(false);
+        if(requestCode != FileDisplayActivity.REQUEST_CODE__DIRECT_CAMERA_UPLOAD) {
+            startActivityForResult(new Intent(MediaStore.ACTION_IMAGE_CAPTURE), REQUEST_CODE_CAPTURE_CAMERA);
+            if (isSearchOpen() && mSearchView != null) {
+                mSearchView.setQuery("", false);
+                mFileListFragment.onClose();
+                mSearchView.onActionViewCollapsed();
+                setDrawerIndicatorEnabled(isDrawerIndicatorAvailable());
+            } else {
+                if (mDirectories.getCount() <= SINGLE_DIR) {
+                    finish();
+                    return;
                 }
-            }
+                popDirname();
+                mFileListFragment.onNavigateUp();
+                mCurrentDir = mFileListFragment.getCurrentDirectory();
 
-            // invalidate checked state when navigating directories
-            if (!mLocalFolderPickerMode) {
-                setSelectAllMenuItem(mOptionsMenu.findItem(R.id.action_select_all), false);
+                if (mCurrentDir.getParentFile() == null) {
+                    ActionBar actionBar = getSupportActionBar();
+                    if (actionBar != null) {
+                        actionBar.setDisplayHomeAsUpEnabled(false);
+                    }
+                }
+
+                // invalidate checked state when navigating directories
+                if (!mLocalFolderPickerMode) {
+                    setSelectAllMenuItem(mOptionsMenu.findItem(R.id.action_select_all), false);
+                }
             }
         }
     }
@@ -523,9 +621,11 @@ public class UploadFilesActivity extends FileActivity implements
          */
         @Override
         protected void onPreExecute () {
-            /// progress dialog and disable 'Move' button
-            mCurrentDialog = IndeterminateProgressDialog.newInstance(R.string.wait_a_moment, false);
-            mCurrentDialog.show(getSupportFragmentManager(), WAIT_DIALOG_TAG);
+            if (requestCode != FileDisplayActivity.REQUEST_CODE__DIRECT_CAMERA_UPLOAD) {
+                /// progress dialog and disable 'Move' button
+                mCurrentDialog = IndeterminateProgressDialog.newInstance(R.string.wait_a_moment, false);
+                mCurrentDialog.show(getSupportFragmentManager(), WAIT_DIALOG_TAG);
+            }
         }
 
         /**
@@ -537,7 +637,13 @@ public class UploadFilesActivity extends FileActivity implements
         @Override
         protected Boolean doInBackground(Boolean... params) {
             if(params[0]) {
-                String[] checkedFilePaths = mFileListFragment.getCheckedFilePaths();
+                String[] checkedFilePaths;
+                if (requestCode == FileDisplayActivity.REQUEST_CODE__DIRECT_CAMERA_UPLOAD) {
+                    checkedFilePaths = new String[]{capturedImagePath};
+                } else {
+                    checkedFilePaths = mFileListFragment.getCheckedFilePaths();
+                }
+
                 long total = 0;
                 for (int i = 0; checkedFilePaths != null && i < checkedFilePaths.length; i++) {
                     String localPath = checkedFilePaths[i];
@@ -566,28 +672,36 @@ public class UploadFilesActivity extends FileActivity implements
             }
 
             if (result) {
-                // return the list of selected files (success)
+                // return the list of files (success)
                 Intent data = new Intent();
-                data.putExtra(EXTRA_CHOSEN_FILES, mFileListFragment.getCheckedFilePaths());
 
-                // set result code
-                switch (mBehaviourSpinner.getSelectedItemPosition()) {
-                    case 0: // move to nextcloud folder
-                        setResult(RESULT_OK_AND_MOVE, data);
-                        break;
+                if(requestCode == FileDisplayActivity.REQUEST_CODE__DIRECT_CAMERA_UPLOAD){
+                    data.putExtra(EXTRA_CHOSEN_FILES,new String[]{ capturedImagePath});
+                    setResult(RESULT_OK_AND_MOVE, data);
 
-                    case 1: // only upload
-                        setResult(RESULT_OK_AND_DO_NOTHING, data);
-                        break;
+                    PreferenceManager.setUploaderBehaviour(getApplicationContext(), FileUploader.LOCAL_BEHAVIOUR_MOVE);
+                } else {
+                    data.putExtra(EXTRA_CHOSEN_FILES, mFileListFragment.getCheckedFilePaths());
 
-                    case 2: // upload and delete from source
-                        setResult(RESULT_OK_AND_DELETE, data);
-                        break;
+                    // set result code
+                    switch (mBehaviourSpinner.getSelectedItemPosition()) {
+                        case 0: // move to nextcloud folder
+                            setResult(RESULT_OK_AND_MOVE, data);
+                            break;
+
+                        case 1: // only upload
+                            setResult(RESULT_OK_AND_DO_NOTHING, data);
+                            break;
+
+                        case 2: // upload and delete from source
+                            setResult(RESULT_OK_AND_DELETE, data);
+                            break;
+                    }
+
+                    // store behaviour
+                    PreferenceManager.setUploaderBehaviour(getApplicationContext(),
+                            mBehaviourSpinner.getSelectedItemPosition());
                 }
-
-                // store behaviour
-                PreferenceManager.setUploaderBehaviour(getApplicationContext(),
-                        mBehaviourSpinner.getSelectedItemPosition());
 
                 finish();
             } else {
