@@ -8,4 +8,5 @@
     <root-path name="external_files" path="/storage/" />
     <!-- yes, valid for ALL external storage and not only our app folder, since we can't use @string/data_folder
     as a value for 'path' attribute; in practice, we will only generate URIs in our folders, of course -->
+    <external-path name="my_images" path="Android/data/com.nextcloud.client/files/Pictures" />
 </paths>
